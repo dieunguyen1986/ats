@@ -1,0 +1,185 @@
+# =============================================================================
+# Workflow: CD — Deploy Backend to Render (PaaS)
+# =============================================================================
+# Trigger  : Push vào branch main (sau khi CI pass)
+# Purpose  : Trigger Render redeploy → wait for completion → verify health
+# Time     : ~5-10 minutes (Render builds Docker image on their infra)
+#
+# SETUP REQUIRED — GitHub Repository Secrets:
+#   Vào: Settings → Secrets and variables → Actions → New repository secret
+#
+#   SECRET NAME              VALUE                  Lấy từ đâu
+#   ─────────────────────────────────────────────────────────────────────
+#   RENDER_API_KEY           rnd_xxxxxxxxxxxxxxxx   Render Dashboard → Account → API Keys
+#   RENDER_SERVICE_ID        srv-xxxxxxxxxxxxxxxx   Render Dashboard → Service → Settings → Service ID
+#   RENDER_SERVICE_URL       ats-backend.onrender.com  Render Dashboard → Service URL (không có https://)
+#
+# LƯU Ý: DB credentials và JWT_SECRET được cấu hình TRỰC TIẾP trên Render Dashboard
+# (Environment → Environment Variables), KHÔNG qua GitHub Secrets.
+# GitHub Secrets chỉ cần RENDER_API_KEY + RENDER_SERVICE_ID + RENDER_SERVICE_URL.
+# =============================================================================
+
+name: CD — Deploy Backend to Render
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'ATS_BE/**'
+      - 'render.yaml'
+      - '.github/workflows/deploy-backend.yml'
+  # Manual trigger for emergency re-deploy
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual deploy'
+        required: false
+        default: 'Manual trigger'
+
+# Only one deploy at a time — prevents race conditions on Render
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false   # Never cancel an in-progress deploy
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Trigger Render Deploy + Wait for Completion
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to Render
+    runs-on: ubuntu-latest
+    environment: production   # Optional: configure manual approval in GitHub
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Trigger Render Deploy via API
+        id: render-deploy
+        run: |
+          echo "Triggering Render deployment for service: ${{ secrets.RENDER_SERVICE_ID }}"
+
+          # Call Render API to trigger a new deploy
+          RESPONSE=$(curl -s -X POST \
+            "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache": false}')
+
+          echo "Render API response: $RESPONSE"
+
+          # Extract deploy ID for tracking
+          DEPLOY_ID=$(echo "$RESPONSE" | python3 -c \
+            "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null || echo "")
+
+          if [ -z "$DEPLOY_ID" ]; then
+            echo "ERROR: Failed to get deploy ID from Render API"
+            echo "Response was: $RESPONSE"
+            exit 1
+          fi
+
+          echo "deploy_id=$DEPLOY_ID" >> $GITHUB_OUTPUT
+          echo "Deploy triggered. ID: $DEPLOY_ID"
+
+      - name: Wait for Render deployment to complete
+        id: wait-deploy
+        run: |
+          DEPLOY_ID="${{ steps.render-deploy.outputs.deploy_id }}"
+          SERVICE_ID="${{ secrets.RENDER_SERVICE_ID }}"
+          MAX_WAIT=600   # 10 minutes max (Render build can take up to 8 min)
+          ELAPSED=0
+          POLL_INTERVAL=15
+
+          echo "Polling deploy status (ID: $DEPLOY_ID)..."
+
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            STATUS_RESPONSE=$(curl -s \
+              "https://api.render.com/v1/services/$SERVICE_ID/deploys/$DEPLOY_ID" \
+              -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}")
+
+            STATUS=$(echo "$STATUS_RESPONSE" | python3 -c \
+              "import sys,json; d=json.load(sys.stdin); print(d.get('status','unknown'))" 2>/dev/null || echo "unknown")
+
+            echo "  [${ELAPSED}s] Deploy status: $STATUS"
+
+            case "$STATUS" in
+              "live")
+                echo "✓ Deployment completed successfully (status: live)"
+                echo "deploy_status=success" >> $GITHUB_OUTPUT
+                break
+                ;;
+              "deactivated"|"build_failed"|"update_failed"|"canceled"|"pre_deploy_failed")
+                echo "✗ Deployment failed (status: $STATUS)"
+                echo "deploy_status=failed" >> $GITHUB_OUTPUT
+                exit 1
+                ;;
+              "build_in_progress"|"update_in_progress"|"pre_deploy_in_progress"|"created")
+                # Still running — keep polling
+                sleep $POLL_INTERVAL
+                ELAPSED=$((ELAPSED + POLL_INTERVAL))
+                ;;
+              *)
+                echo "  Unknown status: $STATUS — continuing to poll"
+                sleep $POLL_INTERVAL
+                ELAPSED=$((ELAPSED + POLL_INTERVAL))
+                ;;
+            esac
+          done
+
+          if [ $ELAPSED -ge $MAX_WAIT ]; then
+            echo "✗ Deployment timed out after ${MAX_WAIT}s"
+            exit 1
+          fi
+
+      # ---------------------------------------------------------------------------
+      # Post-deploy: Verify the service is actually healthy
+      # ---------------------------------------------------------------------------
+      - name: Verify production health
+        run: |
+          HEALTH_URL="https://${{ secrets.RENDER_SERVICE_URL }}/actuator/health"
+          echo "Verifying health at: $HEALTH_URL"
+
+          # Give Render a moment for the new instance to start accepting traffic
+          sleep 15
+
+          # Retry health check 3 times
+          for i in 1 2 3; do
+            HTTP_CODE=$(curl -s -o /tmp/health_resp.json -w "%{http_code}" \
+              --connect-timeout 10 --max-time 20 "$HEALTH_URL" || echo "000")
+
+            HEALTH_STATUS=$(python3 -c \
+              "import json; d=json.load(open('/tmp/health_resp.json')); print(d.get('status','UNKNOWN'))" \
+              2>/dev/null || echo "UNKNOWN")
+
+            echo "  Attempt $i: HTTP=$HTTP_CODE, status=$HEALTH_STATUS"
+
+            if [ "$HTTP_CODE" = "200" ] && [ "$HEALTH_STATUS" = "UP" ]; then
+              echo "✓ Production health check passed"
+              break
+            fi
+
+            if [ $i -eq 3 ]; then
+              echo "✗ Health check failed after 3 attempts"
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "## ✅ Render Deployment Successful" >> $GITHUB_STEP_SUMMARY
+            echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Service | ${{ secrets.RENDER_SERVICE_ID }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| URL | https://${{ secrets.RENDER_SERVICE_URL }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Health | https://${{ secrets.RENDER_SERVICE_URL }}/actuator/health |" >> $GITHUB_STEP_SUMMARY
+            echo "| Time | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ Render Deployment Failed" >> $GITHUB_STEP_SUMMARY
+            echo "Check Render Dashboard for build logs:" >> $GITHUB_STEP_SUMMARY
+            echo "https://dashboard.render.com/web/${{ secrets.RENDER_SERVICE_ID }}/deploys" >> $GITHUB_STEP_SUMMARY
+          fi

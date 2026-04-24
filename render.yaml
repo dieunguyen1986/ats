@@ -1,0 +1,98 @@
+# =============================================================================
+# Render Blueprint — ATS Platform Infrastructure as Code
+# =============================================================================
+# File này định nghĩa toàn bộ infrastructure cho ATS trên Render.
+# Đặt tại root của Git repository (Development/).
+#
+# Áp dụng Blueprint:
+#   1. Vào https://dashboard.render.com/blueprints
+#   2. New Blueprint Instance → chọn GitHub repo → Render tự đọc file này
+#
+# Tài liệu: https://render.com/docs/blueprint-spec
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # ATS Backend — Spring Boot Web Service
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: ats-backend
+    runtime: docker
+
+    # Build từ Dockerfile trong ATS_BE/ sub-directory
+    dockerfilePath: ./ATS_BE/Dockerfile
+    dockerContext: ./ATS_BE
+
+    # Branch trigger auto-deploy
+    branch: main
+    autoDeploy: false   # Disable Render auto-deploy — GitHub Actions quản lý deploy
+
+    # Render plan: starter = $7/month (512MB RAM, shared CPU)
+    # Upgrade lên standard ($25/mo) nếu cần 2GB RAM cho production load
+    plan: starter
+
+    # Health check — Render dùng để route traffic chỉ khi healthy
+    healthCheckPath: /actuator/health
+
+    # Graceful shutdown (Flyway migrations cần thêm thời gian)
+    numInstances: 1
+
+    # Environment Variables
+    # Render tự inject DATABASE_URL khi link với database service bên dưới
+    envVars:
+
+      # --- Spring Configuration ---
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+
+      - key: SERVER_PORT
+        value: 8080
+
+      # --- Database (auto-injected từ Render Managed PostgreSQL) ---
+      - key: DB_HOST
+        fromDatabase:
+          name: ats-postgres
+          property: host
+
+      - key: DB_PORT
+        fromDatabase:
+          name: ats-postgres
+          property: port
+
+      - key: DB_NAME
+        fromDatabase:
+          name: ats-postgres
+          property: database
+
+      - key: DB_USERNAME
+        fromDatabase:
+          name: ats-postgres
+          property: user
+
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: ats-postgres
+          property: password
+
+      # --- JWT Security (set manually in Render Dashboard after creation) ---
+      # Generate: openssl rand -hex 32
+      - key: JWT_SECRET
+        sync: false   # Render sẽ yêu cầu điền giá trị thủ công sau khi tạo
+
+      - key: JWT_EXPIRATION_MS
+        value: "86400000"   # 24 hours
+
+  # ---------------------------------------------------------------------------
+  # ATS PostgreSQL — Managed Database
+  # ---------------------------------------------------------------------------
+databases:
+  - name: ats-postgres
+    databaseName: ats_db
+    user: ats_user
+    plan: starter   # Free tier: 256MB RAM, 1GB storage, 1 month retention
+                    # Upgrade to starter+ ($7/mo) cho production: 1GB RAM, 10GB storage
+
+    # PostgreSQL version
+    # Render managed PostgreSQL 16 (latest supported)
+    # Sẽ tự động backup daily, restore available từ Dashboard

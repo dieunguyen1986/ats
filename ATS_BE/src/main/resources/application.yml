@@ -9,7 +9,7 @@ spring:
 
   # --- Database Connection ---
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/ats_db
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:ats_db}
     username: ${DB_USERNAME:dieunt}
     password: ${DB_PASSWORD:}
     driver-class-name: org.postgresql.Driver
@@ -38,3 +38,21 @@ app:
   jwt:
     secret: ${JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+
+# --- Spring Actuator (Health Check for Docker / Uptime Robot) ---
+management:
+  endpoints:
+    web:
+      exposure:
+        # SECURITY: Only expose 'health' — never expose 'env', 'beans', 'heapdump' in production
+        include: health
+  endpoint:
+    health:
+      show-details: never        # Hide internal component details from public endpoint
+      probes:
+        enabled: true            # Enable /actuator/health/liveness & /actuator/health/readiness
+  health:
+    livenessState:
+      enabled: true
+    readinessState:
+      enabled: true

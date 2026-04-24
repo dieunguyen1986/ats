@@ -1,0 +1,145 @@
+# =============================================================================
+# Workflow: Scheduled Health Check — Production Monitor (Render)
+# =============================================================================
+# Trigger  : Mỗi 15 phút (cron) + manual trigger
+# Purpose  : Phát hiện Render service downtime, alert qua GitHub Issues
+# Time     : ~30 seconds
+#
+# Secret required: RENDER_SERVICE_URL (vd: ats-backend.onrender.com)
+# Nếu backend DOWN → tự động tạo GitHub Issue để alert team.
+# =============================================================================
+
+name: Health Check — Production Monitor
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # Every 15 minutes
+  workflow_dispatch:
+    inputs:
+      service_url:
+        description: 'Override Render service URL (without https://) for manual check'
+        required: false
+
+env:
+  # Render services use HTTPS with auto-managed TLS
+  HEALTH_URL: "https://${{ secrets.RENDER_SERVICE_URL }}/actuator/health"
+
+jobs:
+  health-check:
+    name: Production Health Check
+    runs-on: ubuntu-latest
+    # Skip if RENDER_SERVICE_URL secret not set (e.g., during initial setup)
+    if: ${{ secrets.RENDER_SERVICE_URL != '' }}
+
+    steps:
+      - name: Check /actuator/health endpoint
+        id: health
+        run: |
+          TARGET_URL="${{ inputs.service_url != '' && format('https://{0}/actuator/health', inputs.service_url) || env.HEALTH_URL }}"
+          echo "Checking: $TARGET_URL"
+
+          HTTP_CODE=$(curl -s -o /tmp/health_response.json -w "%{http_code}" \
+            --connect-timeout 10 --max-time 15 "$TARGET_URL" || echo "000")
+
+          echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
+          echo "HTTP Status: $HTTP_CODE"
+
+          if [ -f /tmp/health_response.json ]; then
+            cat /tmp/health_response.json
+            HEALTH_STATUS=$(python3 -c \
+              "import json; d=json.load(open('/tmp/health_response.json')); print(d.get('status','UNKNOWN'))" \
+              2>/dev/null || echo "PARSE_ERROR")
+            echo "health_status=$HEALTH_STATUS" >> $GITHUB_OUTPUT
+          else
+            echo "health_status=NO_RESPONSE" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Alert on failure — Create GitHub Issue
+        if: steps.health.outputs.http_code != '200' || steps.health.outputs.health_status != 'UP'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const now = new Date().toISOString();
+            const httpCode = '${{ steps.health.outputs.http_code }}';
+            const healthStatus = '${{ steps.health.outputs.health_status }}';
+
+            // Check if there's already an open issue for this outage
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: ['production-down']
+            });
+
+            if (issues.data.length === 0) {
+              // Create new alert issue
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🚨 [PRODUCTION DOWN] ATS Backend - ${now}`,
+                body: [
+                  '## Production Health Check Failed',
+                  '',
+                  `**Time:** ${now}`,
+                  `**HTTP Status:** ${httpCode} (expected 200)`,
+                  `**Health Status:** ${healthStatus} (expected UP)`,
+                  `**Endpoint:** ${{ env.HEALTH_URL }}`,
+                  '',
+                  '## Immediate Actions',
+                  '1. Vào Render Dashboard: https://dashboard.render.com',
+                  '2. Chọn service **ats-backend** → tab **Logs** để xem lỗi',
+                  '3. Tab **Events** để xem lịch sử deploy',
+                  '4. Nếu cần restart: nút **Manual Deploy** → Deploy latest commit',
+                  '5. Kiểm tra **Environment** variables vẫn còn đầy đủ',
+                  '',
+                  '## Auto-close',
+                  'Issue này sẽ được đóng tự động khi service phục hồi.',
+                ].join('\n'),
+                labels: ['production-down', 'priority: critical']
+              });
+              console.log('Created new production-down issue');
+            } else {
+              console.log(`Existing issue #${issues.data[0].number} still open — skipping duplicate`);
+            }
+
+      - name: Auto-close issue when service recovers
+        if: steps.health.outputs.http_code == '200' && steps.health.outputs.health_status == 'UP'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: ['production-down']
+            });
+
+            for (const issue of issues.data) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `✅ **Service Recovered** at ${new Date().toISOString()}\n\nHealth check returned HTTP 200 / status UP. Auto-closing this issue.`
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed'
+              });
+            }
+
+      - name: Write health summary
+        run: |
+          STATUS="${{ steps.health.outputs.health_status }}"
+          CODE="${{ steps.health.outputs.http_code }}"
+          if [ "$CODE" = "200" ] && [ "$STATUS" = "UP" ]; then
+            echo "## ✅ Health Check Passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ Health Check FAILED" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| HTTP Code | $CODE |" >> $GITHUB_STEP_SUMMARY
+          echo "| Health Status | $STATUS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Checked At | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY

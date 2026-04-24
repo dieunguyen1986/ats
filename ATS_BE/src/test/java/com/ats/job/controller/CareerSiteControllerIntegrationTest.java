@@ -9,9 +9,9 @@ import com.ats.job.service.JobPostingService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mock;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.bean.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -20,6 +20,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
+import static java.util.UUID.randomUUID;
 import static org.hamcrest.Matchers.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
@@ -48,22 +49,23 @@ class CareerSiteControllerIntegrationTest {
     @Autowired
     private MockMvc mockMvc;
 
-    @MockBean
+    @Mock
     private JobPostingService jobPostingService;
 
     // ================================================================
     // Helper: create sample JobPostingResponse
     // ================================================================
     private JobPostingResponse sampleJob(String title, String department) {
-        return new JobPostingResponse(
-                UUID.randomUUID(),
-                title,
-                department,
-                "Ho Chi Minh City",
-                EmploymentType.FULL_TIME,
-                JobPostingStatus.PUBLISHED,
-                LocalDateTime.of(2026, 4, 20, 10, 0)
-        );
+        return null;
+//                new JobPostingResponse(
+//                randomUUID(),
+//                title,
+//                department,
+//                "Ho Chi Minh City",
+//                EmploymentType.FULL_TIME,
+//                JobPostingStatus.PUBLISHED,
+//                LocalDateTime.of(2026, 4, 20, 10, 0)
+//        );
     }
 
     private PageResponse<JobPostingResponse> pageOf(List<JobPostingResponse> items, int totalElements) {

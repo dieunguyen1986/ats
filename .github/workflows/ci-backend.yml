@@ -1,0 +1,123 @@
+# =============================================================================
+# Workflow: CI — Backend Build & Test
+# =============================================================================
+# Trigger  : Push / PR vào branches develop, main
+# Purpose  : Compile code, run unit tests, validate Dockerfile builds
+# Time     : ~3-5 minutes
+#
+# This workflow DOES NOT deploy — only validates code quality.
+# Deployment is handled by deploy-backend.yml (triggered on push to main only).
+# =============================================================================
+
+name: CI — Backend Build & Test
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+    paths:
+      - 'ATS_BE/**'
+      - '.github/workflows/ci-backend.yml'
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths:
+      - 'ATS_BE/**'
+
+# Cancel in-progress runs on the same branch to save CI minutes
+concurrency:
+  group: ci-backend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Build & Unit Test
+  # ---------------------------------------------------------------------------
+  build-and-test:
+    name: Build & Test (Java 21)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ATS_BE
+
+    services:
+      # Spin up a real PostgreSQL for integration tests
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: ats_test
+          POSTGRES_USER: ats_test_user
+          POSTGRES_PASSWORD: ats_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ats_test_user -d ats_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven           # Cache ~/.m2/repository between runs
+
+      - name: Validate Maven POM
+        run: mvn -B validate
+
+      # Run tests with real PostgreSQL (integration tests included)
+      - name: Run tests
+        run: mvn -B test
+        env:
+          SPRING_PROFILES_ACTIVE: test
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: ats_test
+          DB_USERNAME: ats_test_user
+          DB_PASSWORD: ats_test_password
+          JWT_SECRET: ci-test-secret-not-for-production-use-only-32chars
+          JWT_EXPIRATION_MS: 3600000
+
+      - name: Upload test reports
+        uses: actions/upload-artifact@v4
+        if: always()   # Upload even if tests fail — for debugging
+        with:
+          name: test-reports
+          path: ATS_BE/target/surefire-reports/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Dockerfile Build Validation
+  # ---------------------------------------------------------------------------
+  docker-build-check:
+    name: Docker Build Validation
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ATS_BE
+    needs: build-and-test   # Only validate Docker build if tests pass
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build but don't push — just validate the Dockerfile is valid
+      - name: Build Docker image (dry-run, no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./ATS_BE
+          file: ./ATS_BE/Dockerfile
+          push: false
+          tags: ats-be:ci-check
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

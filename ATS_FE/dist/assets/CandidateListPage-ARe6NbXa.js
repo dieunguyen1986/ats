@@ -1,0 +1,1 @@
+import{j as e}from"./index-B1LGtMWP.js";const a=()=>e.jsxs("div",{children:[e.jsx("h1",{className:"text-2xl font-bold tracking-tight",children:"Candidates"}),e.jsx("p",{className:"mt-2 text-muted-foreground",children:"Candidate management with search, filtering, and profile details will be displayed here."})]});export{a as default};

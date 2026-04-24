@@ -1,0 +1,57 @@
+-- Script thêm dữ liệu mẫu vào bảng users để test tính năng Authentication
+-- Password mặc định cho tất cả user dưới đây là: admin123
+-- Hash Bcrypt tương ứng: $2a$10$XURPShQNCsLjp1ESc2laoObo9QZDhxz73hJPaEv7/cBha4pk0AgP.
+
+-- 1. Insert Department (Phòng ban) trước vì User có foreign key tới Department
+INSERT INTO departments (department_name, description, created_at, is_deleted)
+VALUES 
+    ('Human Resources', 'Phòng Nhân Sự', CURRENT_TIMESTAMP, false),
+    ('Engineering', 'Phòng Kỹ Thuật', CURRENT_TIMESTAMP, false)
+ON CONFLICT DO NOTHING;
+
+-- 2. Insert Users (Recruiter, Hiring Manager, Admin)
+INSERT INTO users (department_id, full_name, email, password_hash, phone, role, status, created_at, is_deleted)
+VALUES 
+    -- User 1: SYSTEM_ADMIN
+    (
+        (SELECT id FROM departments WHERE department_name = 'Human Resources' LIMIT 1), 
+        'System Admin', 
+        'admin@ats.com', 
+        '$2a$10$XURPShQNCsLjp1ESc2laoObo9QZDhxz73hJPaEv7/cBha4pk0AgP.', -- admin123
+        '0901234567', 
+        'SYSTEM_ADMIN', 
+        'ACTIVE', 
+        CURRENT_TIMESTAMP, 
+        false
+    ),
+    -- User 2: RECRUITER
+    (
+        (SELECT id FROM departments WHERE department_name = 'Human Resources' LIMIT 1), 
+        'Jane Recruiter', 
+        'recruiter@ats.com', 
+        '$2a$10$XURPShQNCsLjp1ESc2laoObo9QZDhxz73hJPaEv7/cBha4pk0AgP.', -- admin123
+        '0907654321', 
+        'RECRUITER', 
+        'ACTIVE', 
+        CURRENT_TIMESTAMP, 
+        false
+    ),
+    -- User 3: HIRING_MANAGER
+    (
+        (SELECT id FROM departments WHERE department_name = 'Engineering' LIMIT 1), 
+        'John Engineering', 
+        'hiring.manager@ats.com', 
+        '$2a$10$XURPShQNCsLjp1ESc2laoObo9QZDhxz73hJPaEv7/cBha4pk0AgP.', -- admin123
+        '0988888888', 
+        'HIRING_MANAGER', 
+        'ACTIVE', 
+        CURRENT_TIMESTAMP, 
+        false
+    );
+
+-- 3. Insert SsoConfiguration (Mock SSO)
+INSERT INTO sso_configurations (provider_type, ldap_url, base_dn, bind_user, is_active, created_at, is_deleted)
+VALUES 
+    ('GOOGLE', null, null, null, true, CURRENT_TIMESTAMP, false),
+    ('AZURE_AD', null, null, null, true, CURRENT_TIMESTAMP, false)
+ON CONFLICT DO NOTHING;

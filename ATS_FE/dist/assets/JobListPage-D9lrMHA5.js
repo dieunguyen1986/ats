@@ -1,0 +1,1 @@
+import{j as t}from"./index-B1LGtMWP.js";const s=()=>t.jsxs("div",{children:[t.jsx("h1",{className:"text-2xl font-bold tracking-tight",children:"Job Postings"}),t.jsx("p",{className:"mt-2 text-muted-foreground",children:"Job listing with search, filter, and management actions will be displayed here."})]});export{s as default};

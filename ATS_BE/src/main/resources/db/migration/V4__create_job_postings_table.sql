@@ -1,0 +1,6 @@
+-- ==============================================================================
+-- V4: Reserved for future migrations.
+-- The full schema is defined in V3__create_users_table.sql.
+-- This file intentionally left as a no-op placeholder.
+-- ==============================================================================
+-- No operations.

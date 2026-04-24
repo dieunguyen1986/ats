@@ -1,0 +1,41 @@
+# ===========================
+# Java Build Artifacts
+# ===========================
+target/
+*.class
+*.jar
+*.war
+
+# ===========================
+# Maven
+# ===========================
+.mvn/
+!.mvn/wrapper/maven-wrapper.jar
+
+# ===========================
+# Secrets & Environment (QUAN TRỌNG)
+# ===========================
+.env
+# .env.example được phép commit (là template, không có giá trị thực)
+
+# ===========================
+# IDE Files
+# ===========================
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+
+# ===========================
+# OS Files
+# ===========================
+.DS_Store
+Thumbs.db
+
+# ===========================
+# Logs
+# ===========================
+*.log
+logs/

@@ -1,0 +1,1 @@
+import{j as e}from"./index-B1LGtMWP.js";const i=()=>e.jsxs("div",{children:[e.jsx("h1",{className:"text-2xl font-bold tracking-tight",children:"Pipeline"}),e.jsx("p",{className:"mt-2 text-muted-foreground",children:"Kanban-style recruitment pipeline with drag-and-drop stage management will be displayed here."})]});export{i as default};

@@ -1,0 +1,1 @@
+import{j as e}from"./index-B1LGtMWP.js";const s=()=>e.jsxs("div",{children:[e.jsx("h1",{className:"text-2xl font-bold tracking-tight",children:"Dashboard"}),e.jsx("p",{className:"mt-2 text-muted-foreground",children:"Welcome to the ATS Dashboard. Analytics and KPI widgets will be displayed here."})]});export{s as default};

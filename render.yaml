@@ -20,9 +20,11 @@ services:
     name: ats-backend
     runtime: docker
 
-    # Build từ Dockerfile trong ATS_BE/ sub-directory
-    dockerfilePath: ./ATS_BE/Dockerfile
-    dockerContext: ./ATS_BE
+    # rootDir: Render chạy từ thư mục ATS_BE/ (khớp với Root Directory setting trên UI)
+    # Tất cả paths bên dưới là RELATIVE TO rootDir (không phải repo root)
+    rootDir: ATS_BE
+    dockerfilePath: ./Dockerfile      # = ATS_BE/Dockerfile ✓
+    dockerContext: .                  # = ATS_BE/ ✓
 
     # Branch trigger auto-deploy
     branch: main
